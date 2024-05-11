@@ -148,11 +148,22 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
         # always keep the sampled point
         np.random.seed(seed)
         sampled_points = sampled_points[np.random.choice(len(sampled_points), int(len(sampled_points)*down_sampling_ratio), replace=False)]
-        sampled_points = np.concatenate([sampled_points, sampled_point.reshape(1, -1)], axis=0)
+        sampled_points = np.concatenate([sampled_point.reshape(1, -1), sampled_points], axis=0)
 
     vector_to_points = sampled_points - sampled_point
+    # Compute an orthonormal basis for the tangent plane
+    tangent1 = np.cross(sampled_normal, [1, 0, 0])
+    if np.linalg.norm(tangent1) < 1e-6:
+        tangent1 = np.cross(sampled_normal, [0, 1, 0])
+    tangent1 = tangent1 / np.linalg.norm(tangent1)
+    tangent2 = np.cross(sampled_normal, tangent1)
+
+    # Project the points onto the tangent plane
+    projected_points = np.dot(vector_to_points, tangent1.reshape(-1, 1)) * tangent1 + np.dot(vector_to_points, tangent2.reshape(-1,1)) * tangent2
+
     train_labels = np.dot(vector_to_points, sampled_normal)
-    projected_points = vector_to_points - np.dot(vector_to_points, sampled_normal.reshape(-1, 1)) * sampled_normal.reshape(1, -1)
+
+    # projected_points = vector_to_points - np.dot(vector_to_points, sampled_normal.reshape(-1, 1)) * sampled_normal.reshape(1, -1)
     # Create input and label tensors
 
     # Create train input tensor (UV coordinates on the tangent plane)
@@ -192,52 +203,59 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
     }
     if show_sample:
 
-        fig = go.Figure(data=[go.Scatter3d(x=sampled_points[:, 0], y=sampled_points[:, 1], z=sampled_points[:, 2], mode='markers', marker=dict(size=3)),
-                                go.Scatter3d(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], mode='markers', marker=dict(size=5, color='red')),
-                              go.Scatter3d(x=projected_points[:, 0], y=projected_points[:, 1], z=train_labels, mode='markers', marker=dict(size=3, color='green')),
-                              go.Scatter3d(x=projected_points[-1:,0], y=projected_points[-1:,1], z=train_labels[-1:], mode='markers', marker=dict(size=5, color='blue')),
-                              go.Cone(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], u=[sampled_normal[0]], v=[sampled_normal[1]], w=[sampled_normal[2]], showscale=False, sizeref=0.005, sizemode='absolute', name='Sampled Normal' ,visible=True),
-                            go.Cone(x=projected_points[-1:, 0], y=projected_points[-1:, 1], z=train_labels[-1:], u=[0], v=[0], w=[1], showscale=False, sizeref=0.005, sizemode='absolute', name='Projected Normal', visible=True)
+        fig = go.Figure(data=[go.Scatter3d(x=sampled_points[:, 0], y=sampled_points[:, 1], z=sampled_points[:, 2], mode='markers', marker=dict(size=3), name='gt_sampled_points'),
+                                go.Scatter3d(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], mode='markers', marker=dict(size=5, color='red'), name='gt_sampled_point'),
+                              go.Cone(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], u=[sampled_normal[0]], v=[sampled_normal[1]], w=[sampled_normal[2]], showscale=False, sizeref=0.01,  name='Sampled Normal', visible=True)
                                 ])
-
-        fig.update_layout(
-            updatemenus=[
-                dict(
-                    type="buttons",
-                    buttons=[
-                        dict(
-                            label="Toggle Normals",
-                            method="restyle",
-                            args=[{"visible": [True, True, True, True, False, True]}],
-                            args2=[{"visible": [True, True, True, True, True, False]}]
-                        )
-                    ],
-                )
-            ]
-        )
+        projected_origin_point = np.argmin(np.linalg.norm(projected_points, axis=1))
+        fig2 = go.Figure(data=[go.Scatter3d(x=projected_points[:, 0], y=projected_points[:, 1], z=train_labels, mode='markers', marker=dict(size=3, color='green'), name='projected_sampled_points'),
+                               go.Scatter3d(x=[projected_points[projected_origin_point, 0]], y=[projected_points[projected_origin_point, 1]], z=[train_labels[projected_origin_point]],
+                                            mode='markers', marker=dict(size=5, color='blue'), name='projected_sampled_point'),
+                               go.Cone(x=[projected_points[projected_origin_point, 0]], y=[projected_points[projected_origin_point, 1]], z=[train_labels[projected_origin_point]],
+                                       u=[0], v=[0], w=[1], showscale=False, sizeref=0.01, name='Projected Normal',
+                                       visible=True)])
 
         # fig_bunny = go.Scatter3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2], mode='markers', marker=dict(size=3))
 
         # fig = go.Figure(data=[go.Surface(x=XY[:,0].reshape(30, 30).detach().numpy(),
         #                                  y=XY[:,1].reshape(30, 30).detach().numpy(),
         #                                  z=F.detach().numpy())])
+        # Create a grid of points for the XY plane
+        x_range = np.linspace(projected_points[:, 0].min(), projected_points[:, 0].max(), 100)
+        y_range = np.linspace(projected_points[:, 1].min(), projected_points[:, 1].max(), 100)
+        x, y = np.meshgrid(x_range, y_range)
+        z = np.zeros_like(x)  # Set z-coordinates to zero for the XY plane
+
+        # Create the transparent XY plane trace
+        xy_plane = go.Surface(x=x, y=y, z=z, opacity=0.3, showscale=False)
+
+        # Add the XY plane trace to fig2
+        fig2.add_trace(xy_plane)
 
         fig.update_layout(scene=dict(xaxis_title='x',
                                      yaxis_title='y',
+                                     zaxis_title='z'))
+        fig2.update_layout(scene=dict(xaxis_title='x',
+                                     yaxis_title='y',
                                      zaxis_title='f(x, y)'))
-
         fig.show()
+        fig2.show()
 
     # if show_sample:
     #     # can do the same as above but with polyscope
     #     ps.init()
     #     ps_points = ps.register_point_cloud("points", sampled_points)
-    #     ps_projected_points = ps.register_point_cloud("projected_points", projected_points)
     #     ps_sampled_point = ps.register_point_cloud("sampled_point", sampled_point.reshape(1, -1))
+    #     ps.get_point_cloud("sampled_point").add_vector_quantity("normal", sampled_normal.reshape(1, -1), enabled=True)
+    #     ps.show()
+    #     ps.remove_point_cloud("points")
+    #     ps.remove_point_cloud("sampled_point")
+    #
+    #     ps.init()
+    #     ps_projected_points = ps.register_point_cloud("projected_points", np.concatenate([projected_points[:,:2], train_labels[:,np.newaxis]], axis=1))
     #     ps_projected_sampled_point = ps.register_point_cloud("projected_sampled_point", projected_points[-1:].reshape(1, -1))
-    #     # normals as vectorfields
-    #     field_name = f"vector_field_{i}_{j}"
-    #     ps.get_surface_mesh(mesh_name).add_vector_quantity(field_name, vector_field.squeeze(), defined_on='vertices')
+    #     ps.get_point_cloud("projected_sampled_point").add_vector_quantity("normal_projected", np.array([0, 0, 1]).reshape(1, -1), enabled=True)
+    #     ps.show()
 
     return dataset
 

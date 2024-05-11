@@ -120,18 +120,21 @@ def mean_curvature(model, x):
     return mean_curvature
 
 
-def calculate_signature(model, x):
+def calculate_signature(model, x, is_siren=False):
     y = model(x)
-    output = {'model_in': x, 'model_out': y}
+    if is_siren:
+        output = y
+    else:
+        output = {'model_in': x, 'model_out': y}
     d1, d2, k1, k2 = calculate_shape_operator_and_principal_directions(output, mid_point=0)
     H = (k1 + k2)/2
     K = k1 * k2
     H = H.unsqueeze(0)
     K = K.unsqueeze(0)
-    grad_H = diff_operators.gradient(H, x)
+    grad_H = diff_operators.gradient(H, output['model_in'])
     H_1 = torch.sum(grad_H * d1, dim=1)
     H_2 = torch.sum(grad_H * d2, dim=1)
-    grad_K = diff_operators.gradient(K, x)
+    grad_K = diff_operators.gradient(K, output["model_in"])
     K_1 = torch.sum(grad_K * d1, dim=1)
     K_2 = torch.sum(grad_K * d2, dim=1)
     signature = torch.stack([H, K, H_1, H_2, K_1, K_2], dim=1)
