@@ -259,6 +259,20 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
 
     return dataset
 
+def gaussian_weighted_mse(x, y, sigma=0.01):
+    squared_diff = (x - y) ** 2
+
+    # Compute the Gaussian weights based on the ground truth values (y)
+    gaussian_weights = torch.exp(-y ** 2 / (2 * sigma ** 2))
+
+    # Apply the scaled weights to the squared differences
+    weighted_squared_diff = squared_diff * gaussian_weights
+
+    # Compute the mean of the weighted squared differences
+    loss = torch.mean(weighted_squared_diff)
+
+    return loss
+
 def loss_func_codazzi(pred, y, input):
     mse = torch.mean((pred - y) ** 2)
     # min euclidean norm of input, preferably 0,0,0 point
