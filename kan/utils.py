@@ -137,6 +137,7 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
     vertices = np.array(mesh.vertices)
     normals = np.array(mesh.vertex_normals)
     neighbors = scipy.spatial.cKDTree(vertices)
+    print('Number of vertices:', len(vertices))
     # Sample a point and find its neighbors within the ball radius
     sampled_point = vertices[sampled_index]
     sampled_normal = normals[sampled_index]
