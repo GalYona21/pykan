@@ -78,7 +78,7 @@ class KAN(nn.Module):
     '''
 
     def __init__(self, width=None, grid=3, k=3, noise_scale=0.1, noise_scale_base=0.1, base_fun=torch.nn.SiLU(), symbolic_enabled=True, bias_trainable=True, grid_eps=1.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True,
-                 device='cpu', seed=0):
+                 device='cpu', seed=0, learn_rotation_mat=False):
         '''
         initalize a KAN model
         
@@ -161,6 +161,12 @@ class KAN(nn.Module):
 
         self.symbolic_fun = nn.ModuleList(self.symbolic_fun)
         self.symbolic_enabled = symbolic_enabled
+
+        self.learn_rotation_mat = learn_rotation_mat
+        self.alpha = nn.Parameter(torch.zeros(1)) # rotation angle
+
+
+
 
     def initialize_from_another_model(self, another_model, x):
         '''
@@ -271,6 +277,16 @@ class KAN(nn.Module):
         model(x)
         for l in range(self.depth):
             self.act_fun[l].initialize_grid_from_parent(model.act_fun[l], model.acts[l])
+    def rotate(self, x):
+        # Create rotation matrix
+        cos_alpha = torch.cos(self.alpha)
+        sin_alpha = torch.sin(self.alpha)
+
+        # Apply rotation to the input
+        x_rot = x.clone()
+        x_rot[:, 0] = x[:, 0] * cos_alpha - x[:, 1] * sin_alpha
+        x_rot[:, 1] = x[:, 0] * sin_alpha + x[:, 1] * cos_alpha
+        return x_rot
 
     def forward(self, x):
         '''
@@ -293,6 +309,9 @@ class KAN(nn.Module):
         >>> model(x).shape
         torch.Size([100, 3])
         '''
+        if self.learn_rotation_mat:
+            x = self.rotate(x)
+
 
         self.acts = []  # shape ([batch, n0], [batch, n1], ..., [batch, n_L])
         self.spline_preacts = []
@@ -839,11 +858,12 @@ class KAN(nn.Module):
             return reg_
 
         pbar = tqdm(range(steps), desc='description', ncols=100)
-
+        loss_fn_given = False
         if loss_fn == None:
             loss_fn = loss_fn_eval = lambda x, y: torch.mean((x - y) ** 2)
         else:
             loss_fn = loss_fn_eval = loss_fn
+            loss_fn_given = True
 
         grid_update_freq = int(stop_grid_update_step / grid_update_num)
 
@@ -872,15 +892,21 @@ class KAN(nn.Module):
         def closure():
             global train_loss, reg_
             optimizer.zero_grad()
-            # x = dataset['train_input'][train_id].to(device).requires_grad_(True)
-            pred = self.forward(dataset['train_input'][train_id].to(device))
+            # pred = self.forward(dataset['train_input'][train_id].to(device))
+            x = dataset['train_input'][train_id].to(device).requires_grad_(True)
+            pred = self.forward(x)
+
             if sglr_avoid == True:
                 id_ = torch.where(torch.isnan(torch.sum(pred, dim=1)) == False)[0]
-                # train_loss = loss_fn(pred[id_], dataset['train_label'][train_id][id_].to(device), x)
-                train_loss = loss_fn(pred[id_], dataset['train_label'][train_id][id_].to(device))
+                if loss_fn_given:
+                    train_loss = loss_fn(pred[id_], dataset['train_label'][train_id][id_].to(device), x)
+                else:
+                    train_loss = loss_fn(pred[id_], dataset['train_label'][train_id][id_].to(device))
             else:
-                # train_loss = loss_fn(pred, dataset['train_label'][train_id].to(device),  x)
-                train_loss = loss_fn(pred, dataset['train_label'][train_id].to(device))
+                if loss_fn_given:
+                    train_loss = loss_fn(pred, dataset['train_label'][train_id].to(device),  x)
+                else:
+                    train_loss = loss_fn(pred, dataset['train_label'][train_id].to(device))
             reg_ = reg(self.acts_scale)
             objective = train_loss + lamb * reg_
             objective.backward()
@@ -913,9 +939,11 @@ class KAN(nn.Module):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-            # x = dataset['test_input'][test_id].to(device).requires_grad_(True)
-            # test_loss = loss_fn_eval(self.forward(x), dataset['test_label'][test_id].to(device), x)
-            test_loss = loss_fn_eval(self.forward(dataset['test_input'][test_id].to(device)), dataset['test_label'][test_id].to(device))
+            x = dataset['test_input'][test_id].to(device).requires_grad_(True)
+            if loss_fn_given:
+                test_loss = loss_fn_eval(self.forward(x), dataset['test_label'][test_id].to(device), x)
+            else:
+                test_loss = loss_fn_eval(self.forward(dataset['test_input'][test_id].to(device)), dataset['test_label'][test_id].to(device))
 
             if _ % log == 0:
                 pbar.set_description("train loss: %.2e | test loss: %.2e | reg: %.2e " % (torch.sqrt(train_loss).cpu().detach().numpy(), torch.sqrt(test_loss).cpu().detach().numpy(), reg_.cpu().detach().numpy()))
@@ -987,7 +1015,7 @@ class KAN(nn.Module):
                 if i not in active_neurons[l + 1]:
                     self.remove_node(l + 1, i)
 
-        model2 = KAN(copy.deepcopy(self.width), self.grid, self.k, base_fun=self.base_fun)
+        model2 = KAN(copy.deepcopy(self.width), self.grid, self.k, base_fun=self.base_fun, learn_rotation_mat=self.learn_rotation_mat)
         model2.load_state_dict(self.state_dict())
         for i in range(len(self.acts_scale)):
             if i < len(self.acts_scale) - 1:

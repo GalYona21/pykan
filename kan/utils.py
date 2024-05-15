@@ -149,6 +149,7 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
         np.random.seed(seed)
         sampled_points = sampled_points[np.random.choice(len(sampled_points), int(len(sampled_points)*down_sampling_ratio), replace=False)]
         sampled_points = np.concatenate([sampled_point.reshape(1, -1), sampled_points], axis=0)
+        np.random.seed(0) # ensure that nothing else is affected by this seed
 
     vector_to_points = sampled_points - sampled_point
     # Compute an orthonormal basis for the tangent plane
@@ -215,7 +216,11 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
                                        u=[0], v=[0], w=[1], showscale=False, sizeref=0.01, name='Projected Normal',
                                        visible=True)])
 
-        # fig_bunny = go.Scatter3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2], mode='markers', marker=dict(size=3))
+        fig_bunny = go.Figure(data=[go.Scatter3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2], mode='markers', marker=dict(size=3)),
+                                                 go.Scatter3d(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], mode='markers',
+                                                              marker=dict(size=5, color='red'),
+                                                              name='gt_sampled_point')]
+                                                 )
 
         # fig = go.Figure(data=[go.Surface(x=XY[:,0].reshape(30, 30).detach().numpy(),
         #                                  y=XY[:,1].reshape(30, 30).detach().numpy(),
@@ -240,7 +245,8 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
                                      zaxis_title='f(x, y)'))
         fig.show()
         fig2.show()
-
+        # fig_bunny.show()
+    #
     # if show_sample:
     #     # can do the same as above but with polyscope
     #     ps.init()
@@ -259,7 +265,7 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
 
     return dataset
 
-def gaussian_weighted_mse(x, y, sigma=0.01):
+def gaussian_weighted_mse(x, y, input, sigma=10.01):
     squared_diff = (x - y) ** 2
 
     # Compute the Gaussian weights based on the ground truth values (y)
@@ -309,6 +315,51 @@ def loss_func_codazzi(pred, y, input):
     loss = loss + mse
     return loss
 
+def loss_mse_rotate_and_dirichlet(pred, y, input):
+    mse = torch.mean((pred - y) ** 2)
+    output = {'model_out': pred, 'model_in': input}
+    mid_point_index = torch.argmin(torch.linalg.norm(input, dim=1))
+
+    d1, d2, k1, k2 = calculate_shape_operator_and_principal_directions(output, mid_point=mid_point_index)
+    y_axis = torch.tensor([0.0, 1.0], device=input.device)
+    loss_axis_alignment = (1-torch.dot(d1, y_axis)**2) ** 2
+    # encourage the model to learn a smooth surface with minimal gradient
+    grad = diff_operators.gradient(pred, input)
+    loss_dirichlet = torch.mean(torch.sum(grad ** 2, dim=1))
+    loss = mse + (1e-1)*loss_axis_alignment + (1e-6)*loss_dirichlet
+    return loss
+
+
+def loss_mse_and_dirichlet(pred, y, input):
+    mse = torch.mean((pred - y) ** 2)
+    grad = diff_operators.gradient(pred, input)
+    loss_dirichlet = torch.mean(torch.sum(grad ** 2, dim=1))
+    loss = mse + 0.00001*loss_dirichlet
+    return loss
+
+def loss_mse_rotate(pred, y, input):
+    mse = torch.mean((pred - y) ** 2)
+    output = {'model_out': pred, 'model_in': input}
+    mid_point_index = torch.argmin(torch.linalg.norm(input, dim=1))
+
+    d1, d2, k1, k2, II = calculate_shape_operator_and_principal_directions(output, mid_point=mid_point_index, return_II=True)
+    # y_axis = torch.tensor([0.0, 1.0], device=input.device)
+    # loss_axis_alignment = (1-torch.dot(d1, y_axis)**2) ** 2
+    # make II diagonal
+    loss_axis_alignment = II[0, 1] ** 2 + II[1,0] ** 2
+    loss = mse + 0.0001*loss_axis_alignment
+    return loss
+
+def loss_mse_and_curvature(pred, y, input):
+    mse = torch.mean((pred - y) ** 2)
+    output = {'model_out': pred, 'model_in': input}
+    mid_point_index = torch.argmin(torch.linalg.norm(input, dim=1))
+
+    d1, d2, k1, k2 = calculate_shape_operator_and_principal_directions(output, mid_point=mid_point_index)
+    mean_curvature = (k1 + k2) / 2
+    loss_curvature = torch.mean(mean_curvature ** 2)
+    loss = mse + 0.0001*loss_curvature
+    return loss
 
 def fit_params(x, y, fun, a_range=(-10, 10), b_range=(-10, 10), grid_number=101, iteration=3, verbose=True,
                device='cpu'):

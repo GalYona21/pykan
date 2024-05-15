@@ -4,7 +4,7 @@ import diff_operators
 from diff_operators import mean_curvature
 
 
-def calculate_shape_operator_and_principal_directions(output, mid_point, return_pushed_forward_vectors= False):
+def calculate_shape_operator_and_principal_directions(output, mid_point, return_pushed_forward_vectors= False, return_II=False):
     grad_f = torch.autograd.grad(output['model_out'], output["model_in"], grad_outputs=torch.ones_like(output['model_out']), create_graph=True)[0]
 
     dxdf = grad_f[:, 0]
@@ -24,21 +24,7 @@ def calculate_shape_operator_and_principal_directions(output, mid_point, return_
     G = torch.sum(f_y * f_y, dim=1)
     I = torch.stack([E, F, F, G], dim=1).reshape(-1, 2, 2)
 
-    # calculate the second fundamental form II
-    # N = torch.nn.functional.normalize(torch.cross(f_x, f_y), dim=0)
-    # mesh_o3d = o3d.geometry.TriangleMesh()
-    # mesh_o3d.vertices = o3d.utility.Vector3dVector(mesh.v)
-    # mesh_o3d.triangles = o3d.utility.Vector3iVector(mesh.f)
-    # mesh_o3d.compute_vertex_normals()
-    # normals = torch.tensor(mesh_o3d.vertex_normals, dtype=torch.float32)
-    # point_cloud = o3d.geometry.PointCloud()
-    # point_cloud.points = o3d.utility.Vector3dVector(mesh.v)
-    #
-    # point_cloud.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    # point_cloud.orient_normals_consistent_tangent_plane(6)
-    # # point_cloud.orient_normals_towards_camera_location([0, 0, 1])
-    # normals = np.asarray(point_cloud.normals)
-    # normals = torch.tensor(normals, dtype=torch.float32)
+
     normals = torch.nn.functional.normalize(torch.cross(f_x, f_y), dim=1)
 
     f_xx = torch.stack([torch.zeros_like(dxxdf_and_dxydf[:, 0]), torch.zeros_like(dxxdf_and_dxydf[:, 0]), dxxdf_and_dxydf[:, 0]], dim=0).T
@@ -107,11 +93,52 @@ def calculate_shape_operator_and_principal_directions(output, mid_point, return_
     # using igl to calculate principal curvatures and directions
     if return_pushed_forward_vectors:
         return e1[center_point_index], e2[center_point_index], grad_f
+    if return_II:
+        return eigenvectors[center_point_index, :, 0], eigenvectors[center_point_index, :, 1], k1[center_point_index], k2[center_point_index], II[center_point_index]
 
     # we don't concern with the sign of the direction of e1 and e2
-    eigenvector1_absolute = torch.abs(eigenvectors[center_point_index, :, 0])
-    eigenvector2_absolute = torch.abs(eigenvectors[center_point_index, :, 1])
-    return  eigenvector1_absolute, eigenvector2_absolute, k1[center_point_index], k2[center_point_index]
+    # eigenvector1_absolute = torch.abs(eigenvectors[center_point_index, :, 0])
+    # eigenvector2_absolute = torch.abs(eigenvectors[center_point_index, :, 1])
+    return  eigenvectors[center_point_index, :, 0], eigenvectors[center_point_index, :, 1], k1[center_point_index], k2[center_point_index]
+
+
+
+def calculate_principal_directions_and_curvatures(output, midpoint_index):
+    # Calculate the gradients of the model output with respect to the input
+    grad_f = torch.autograd.grad(output['model_out'], output['model_in'],
+                                 grad_outputs=torch.ones_like(output['model_out']), create_graph=True)[0]
+    dxdf = grad_f[:, 0]
+    dydf = grad_f[:, 1]
+    dxxdf_and_dxydf = torch.autograd.grad(dxdf, output["model_in"], grad_outputs=torch.ones_like(dxdf), create_graph=True)[0]
+    dxydf_and_dyydf = torch.autograd.grad(dydf, output["model_in"], grad_outputs=torch.ones_like(dydf), create_graph=True)[0]
+
+    dxxdf = dxxdf_and_dxydf[:, 0]
+    dxydf = dxxdf_and_dxydf[:, 1]
+    dyydf = dxydf_and_dyydf[:, 1]
+
+
+
+    E = 1 + dxdf**2
+    F = dxdf * dydf
+    G = 1 + dydf**2
+    eps = 1e-6
+    L = dxxdf / torch.sqrt(1 + dxdf**2 + dydf**2 + eps)
+    M = dxydf / torch.sqrt(1 + dxdf**2 + dydf**2 + eps)
+    N = dyydf / torch.sqrt(1 + dxdf**2 + dydf**2 + eps)
+
+    det = E * G - F**2 + eps
+    S = torch.stack([
+        (N * F - M * G) / det,
+        (L * G - N * E) / det,
+        (M * F - L * G) / det,
+        (N * E - M * F) / det
+    ], dim=-1).view(-1, 2, 2)
+
+    eigenvalues, eigenvectors = torch.linalg.eigh(S)
+    principal_curvatures = eigenvalues.squeeze()
+    principal_directions = eigenvectors.squeeze()
+
+    return principal_directions[:, 0], principal_directions[:, 1], principal_curvatures[0], principal_curvatures[1]
 
 def mean_curvature(model, x):
     y = model(x)
@@ -137,6 +164,25 @@ def calculate_signature(model, x, is_siren=False):
     grad_K = diff_operators.gradient(K, output["model_in"])
     K_1 = torch.sum(grad_K * d1, dim=1)
     K_2 = torch.sum(grad_K * d2, dim=1)
+    signature = torch.stack([H, K, H_1, H_2, K_1, K_2], dim=1)
+    return signature
+
+def calculate_signature_just_autodiff(model, x):
+    # assume d1,d2 aligned with X,Y axis
+    y = model(x)
+
+    output = {'model_in': x, 'model_out': y}
+    d1, d2, k1, k2 = calculate_shape_operator_and_principal_directions(output, mid_point=0)
+    H = (k1 + k2) / 2
+    K = k1 * k2
+    H = H.unsqueeze(0)
+    K = K.unsqueeze(0)
+    grad_H = diff_operators.gradient(H, output['model_in'])
+    H_1 = grad_H[:, 0]
+    H_2 = grad_H[:, 1]
+    grad_K = diff_operators.gradient(K, output["model_in"])
+    K_1 = grad_K[:, 0]
+    K_2 = grad_K[:, 1]
     signature = torch.stack([H, K, H_1, H_2, K_1, K_2], dim=1)
     return signature
 
