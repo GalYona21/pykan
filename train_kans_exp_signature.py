@@ -11,7 +11,7 @@ print(sampled_indices)
 
 
 grid_range = 1.0
-ball_radius = 0.06 # for bunny worked good with 0.09 around 250 points neighbors
+ball_radius = 0.09 # for bunny worked good with 0.09 around 250 points neighbors
 lr = 1.0
 
 
