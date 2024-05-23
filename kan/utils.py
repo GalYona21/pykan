@@ -1,5 +1,8 @@
+import math
+
 import numpy as np
 import torch
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 import sympy
 import trimesh
@@ -154,15 +157,27 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
 
     vector_to_points = sampled_points - sampled_point
     # Compute an orthonormal basis for the tangent plane
+    sampled_normal = sampled_normal / np.linalg.norm(sampled_normal)
     tangent1 = np.cross(sampled_normal, [1, 0, 0])
     if np.linalg.norm(tangent1) < 1e-6:
         tangent1 = np.cross(sampled_normal, [0, 1, 0])
     tangent1 = tangent1 / np.linalg.norm(tangent1)
     tangent2 = np.cross(sampled_normal, tangent1)
+    tangent2 = tangent2 / np.linalg.norm(tangent2)
 
     # Project the points onto the tangent plane
     projected_points = np.dot(vector_to_points, tangent1.reshape(-1, 1)) * tangent1 + np.dot(vector_to_points, tangent2.reshape(-1,1)) * tangent2
+    z_axis = np.array([0, 0, 1])
+    rotation_axis = np.cross(sampled_normal, z_axis)
+    rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)
+    cos_angle = np.dot(sampled_normal, z_axis) / (np.linalg.norm(sampled_normal) * np.linalg.norm(z_axis))
+    angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
 
+    # Create the rotation matrix using the Rodrigues' rotation formula
+    rotation_matrix = np.eye(3) + np.sin(angle) * np.cross(rotation_axis, np.eye(3)) + (1 - np.cos(angle)) * np.outer(
+        rotation_axis, rotation_axis)
+
+    projected_points = np.dot(projected_points, rotation_matrix)
     train_labels = np.dot(vector_to_points, sampled_normal)
 
     # projected_points = vector_to_points - np.dot(vector_to_points, sampled_normal.reshape(-1, 1)) * sampled_normal.reshape(1, -1)
@@ -205,9 +220,9 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
     }
     if show_sample:
 
-        fig = go.Figure(data=[go.Scatter3d(x=sampled_points[:, 0], y=sampled_points[:, 1], z=sampled_points[:, 2], mode='markers', marker=dict(size=3), name='gt_sampled_points'),
-                                go.Scatter3d(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], mode='markers', marker=dict(size=5, color='red'), name='gt_sampled_point'),
-                              go.Cone(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], u=[sampled_normal[0]], v=[sampled_normal[1]], w=[sampled_normal[2]], showscale=False, sizeref=0.01,  name='Sampled Normal', visible=True)
+        fig = go.Figure(data=[go.Scatter3d(x=vector_to_points[:, 0], y=vector_to_points[:, 1], z=vector_to_points[:, 2], mode='markers', marker=dict(size=3), name='gt_sampled_points'),
+                                go.Scatter3d(x=[vector_to_points[0]], y=[vector_to_points[1]], z=[vector_to_points[2]], mode='markers', marker=dict(size=5, color='red'), name='gt_sampled_point'),
+                              go.Cone(x=[vector_to_points[0]], y=[vector_to_points[1]], z=[vector_to_points[2]], u=[sampled_normal[0]], v=[sampled_normal[1]], w=[sampled_normal[2]], showscale=False, sizeref=0.01,  name='Sampled Normal', visible=True)
                                 ])
         projected_origin_point = np.argmin(np.linalg.norm(projected_points, axis=1))
         fig2 = go.Figure(data=[go.Scatter3d(x=projected_points[:, 0], y=projected_points[:, 1], z=train_labels, mode='markers', marker=dict(size=3, color='green'), name='projected_sampled_points'),
@@ -238,10 +253,21 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
         # Add the XY plane trace to fig2
         fig2.add_trace(xy_plane)
 
-        fig.update_layout(scene=dict(xaxis_title='x',
+        x_min = min(vector_to_points[:, 0].min(), projected_points[:, 0].min())
+        x_max = max(vector_to_points[:, 0].max(), projected_points[:, 0].max())
+        y_min = min(vector_to_points[:, 1].min(), projected_points[:, 1].min())
+        y_max = max(vector_to_points[:, 1].max(), projected_points[:, 1].max())
+        z_min = min(vector_to_points[:, 2].min(), train_labels.min())
+        z_max = max(vector_to_points[:, 2].max(), train_labels.max())
+
+        fig.update_layout(scene=dict(xaxis=dict(range=[x_min, x_max]),
+                                 yaxis=dict(range=[y_min, y_max]),
+                                 zaxis=dict(range=[z_min, z_max]), xaxis_title='x',
                                      yaxis_title='y',
                                      zaxis_title='z'))
-        fig2.update_layout(scene=dict(xaxis_title='x',
+        fig2.update_layout(scene=dict(xaxis=dict(range=[x_min, x_max]),
+                                 yaxis=dict(range=[y_min, y_max]),
+                                 zaxis=dict(range=[z_min, z_max]),xaxis_title='x',
                                      yaxis_title='y',
                                      zaxis_title='f(x, y)'))
         fig.show()
@@ -266,10 +292,44 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
 
     return dataset
 
-def gaussian_weighted_mse(x, y, input, sigma=10.01):
+def sample_fps(vertices, ratio, random_start_point=True):
+    '''
+    Sample points using farthest point sampling
+
+    Args:
+    -----
+        vertices : torch.tensor; shape (N, D)
+            the input point cloud
+        ratio : float
+            the ratio of sampled points
+        random_start_point : bool
+            If True, start from a random point. Default: True.
+
+    Returns:
+    --------
+        sampled_indices : torch.tensor; shape (M,)
+            the indices of sampled points
+    '''
+    num_samples = int(vertices.shape[0] * ratio)
+    sampled_indices = torch.zeros(num_samples, dtype=torch.long)
+
+    if random_start_point:
+        start_index = torch.randint(0, vertices.shape[0], (1,))
+    else:
+        start_index = 0
+    sampled_indices[0] = start_index
+    distances = torch.norm(vertices - vertices[start_index], dim=1)
+    for i in range(1, num_samples):
+        distances = torch.min(distances, torch.norm(vertices - vertices[sampled_indices[i-1]], dim=1))
+        sampled_indices[i] = torch.argmax(distances)
+
+    return sampled_indices
+
+
+def gaussian_weighted_mse(x, y, input,  sigma=0.1):
     squared_diff = (x - y) ** 2
 
-    # Compute the Gaussian weights based on the ground truth values (y)
+    # Compute the Gaussian weights based on the ground truth values (y) the higher values of y, the lower the weight because the further away from the origin
     gaussian_weights = torch.exp(-y ** 2 / (2 * sigma ** 2))
 
     # Apply the scaled weights to the squared differences
