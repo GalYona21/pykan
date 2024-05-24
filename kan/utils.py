@@ -133,7 +133,7 @@ def create_dataset(f,
 
     return dataset
 
-def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_num=1000, normalize_input=False, normalize_label=False,show_sample=False, seed=0, down_sampling_ratio=1.0, device='cpu'):
+def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, max_neighbors=500, test_num=1000, normalize_input=False, normalize_label=False,show_sample=False, seed=0, down_sampling_ratio=1.0, device='cpu'):
     # load a mesh and sample a point cloud from the mesh in ball_radius
     # mesh_path: str, path to the mesh
     mesh = trimesh.load(mesh_path)
@@ -144,8 +144,10 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, test_nu
     # Sample a point and find its neighbors within the ball radius
     sampled_point = vertices[sampled_index]
     sampled_normal = normals[sampled_index]
-
-    indices = neighbors.query_ball_point(sampled_point, ball_radius)
+    # take acording to ball radius but with max neighbors
+    indices = neighbors.query_ball_point(sampled_point, ball_radius, return_sorted=True)
+    if len(indices) > max_neighbors:
+        indices = indices[:max_neighbors]
     sampled_points = vertices[indices]
 
     if down_sampling_ratio < 1.0:
