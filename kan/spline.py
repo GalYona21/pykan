@@ -134,5 +134,10 @@ def curve2coef(x_eval, y_eval, grid, k, device="cpu"):
     '''
     # x_eval: (size, batch); y_eval: (size, batch); grid: (size, grid); k: scalar
     mat = B_batch(x_eval, grid, k, device=device).permute(0, 2, 1)
-    coef = torch.linalg.lstsq(mat.to('cpu'), y_eval.unsqueeze(dim=2).to('cpu')).solution[:, :, 0]  # sometimes 'cuda' version may diverge
+    # coef = torch.linalg.lstsq(mat.to('cpu'), y_eval.unsqueeze(dim=2).to('cpu')).solution[:, :, 0]  # sometimes 'cuda' version may diverge
+    if device == 'cpu':
+        coef = torch.linalg.lstsq(mat.to(device), y_eval.unsqueeze(dim=2).to(device), driver='gelsy').solution[:, :, 0]
+    else:
+        coef = torch.linalg.lstsq(mat.to(device), y_eval.unsqueeze(dim=2).to(device), driver='gels').solution[:, :,
+               0]  # sometimes 'cuda' version may diverge
     return coef.to(device)
