@@ -3,7 +3,7 @@ from my_functions import calculate_signature, calculate_signature_over_all_surfa
 import fpsample
 
 
-mesh_path = "data/armadillo_curvs.ply"
+mesh_path = "data/bunny_curvs.ply"
 mesh = trimesh.load(mesh_path)
 vertices = np.array(mesh.vertices)
 sampled_indices = fpsample.fps_sampling(vertices, 200, start_idx=0) # the start index is for reproducibility
@@ -11,9 +11,9 @@ print(sampled_indices)
 
 
 grid_range = 1.0
-ball_radius = 0.06 # for bunny worked good with 0.09 around 250 points neighbors
+ball_radius = 0.09 # for bunny worked good with 0.09 around 250 points neighbors, for armadillo and dragon 0.06 - maybe 0.05 will be better
 lr = 1.0
-lamb=100.0
+lamb = 100.0
 
 signatures_full_sampling = torch.zeros((len(sampled_indices), 6), dtype=torch.float32)
 signatures_down_sampled = torch.zeros((len(sampled_indices), 6), dtype=torch.float32)
@@ -47,7 +47,7 @@ for i,sampled_index in enumerate(sampled_indices):
 
     # down sampling
 
-    dataset_down_sampled = create_dataset_from_mesh(mesh_path=mesh_path, sampled_index=sampled_index, show_sample=False, ball_radius=ball_radius, seed=i, down_sampling_ratio=0.8)
+    dataset_down_sampled = create_dataset_from_mesh(mesh_path=mesh_path, sampled_index=sampled_index, show_sample=False, ball_radius=ball_radius, seed=i, down_sampling_ratio=0.7)
     print("dataset down sampled size:" , len(dataset_down_sampled["train_input"]))
     model_down_sampled = KAN(width=[2, 5, 1], grid=1, k=5, grid_eps=1.0, seed=0, grid_range=[-grid_range, grid_range], noise_scale=0.1, noise_scale_base=0.1, base_fun=torch.nn.SiLU(), learn_rotation_mat=False)
     model_down_sampled.train(dataset_down_sampled, opt="LBFGS", steps=20, lr=lr, lamb=lamb, lamb_l1=1.0, lamb_entropy=1.0, lamb_coef=0.0, lamb_coefdiff=0.0, sglr_avoid=True, loss_fn=gaussian_weighted_mse)
@@ -137,4 +137,3 @@ for i in range(6):
 
 
 torch.save(signatures_full_sampling, mesh_path+ 'signatures_full_sampling_200_surfaces.pt')
-torch.save(signatures_down_sampled, mesh_path+'signatures_down_sampled_200_surfaces.pt')

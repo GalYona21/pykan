@@ -223,7 +223,7 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, max_nei
     if show_sample:
 
         fig = go.Figure(data=[go.Scatter3d(x=vector_to_points[:, 0], y=vector_to_points[:, 1], z=vector_to_points[:, 2], mode='markers', marker=dict(size=3), name='gt_sampled_points'),
-                                go.Scatter3d(x=[vector_to_points[0]], y=[vector_to_points[1]], z=[vector_to_points[2]], mode='markers', marker=dict(size=5, color='red'), name='gt_sampled_point'),
+                                go.Scatter3d(x=[vector_to_points[0]], y=[vector_to_points[1]], z=[vector_to_points[2]], mode='markers', marker=dict(size=10, color='red'), name='gt_sampled_point'),
                               go.Cone(x=[vector_to_points[0]], y=[vector_to_points[1]], z=[vector_to_points[2]], u=[sampled_normal[0]], v=[sampled_normal[1]], w=[sampled_normal[2]], showscale=False, sizeref=0.01,  name='Sampled Normal', visible=True)
                                 ])
         projected_origin_point = np.argmin(np.linalg.norm(projected_points, axis=1))
@@ -234,11 +234,11 @@ def create_dataset_from_mesh(mesh_path,sampled_index=0, ball_radius=0.1, max_nei
                                        u=[0], v=[0], w=[1], showscale=False, sizeref=0.01, name='Projected Normal',
                                        visible=True)])
 
-        fig_bunny = go.Figure(data=[go.Scatter3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2], mode='markers', marker=dict(size=3)),
-                                                 go.Scatter3d(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], mode='markers',
-                                                              marker=dict(size=5, color='red'),
-                                                              name='gt_sampled_point')]
-                                                 )
+        # fig_bunny = go.Figure(data=[go.Scatter3d(x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2], mode='markers', marker=dict(size=3)),
+        #                                          go.Scatter3d(x=[sampled_point[0]], y=[sampled_point[1]], z=[sampled_point[2]], mode='markers',
+        #                                                       marker=dict(size=5, color='red'),
+        #                                                       name='gt_sampled_point')]
+        #                                          )
 
         # fig = go.Figure(data=[go.Surface(x=XY[:,0].reshape(30, 30).detach().numpy(),
         #                                  y=XY[:,1].reshape(30, 30).detach().numpy(),
