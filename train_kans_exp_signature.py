@@ -137,3 +137,4 @@ for i in range(6):
 
 
 torch.save(signatures_full_sampling, mesh_path+ 'signatures_full_sampling_200_surfaces.pt')
+torch.save(signatures_down_sampled, mesh_path+'signatures_down_sampled_200_surfaces_0_7_sampling.pt')
